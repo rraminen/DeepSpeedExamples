@@ -25,7 +25,7 @@ fi
 ###VOCAB_PATH=/data/megatron-data/gpt2-vocab.json
 ###MERGE_PATH=/data/megatron-data/gpt2-merges.txt
 
-DATA_PATH=/data/Megatron-LM/data/indexed_datasets
+DATA_PATH=/data/Megatron-LM/data/indexed_datasets/megatron
 VOCAB_PATH=/data/Megatron-LM/data/gpt2-vocab.json
 MERGE_PATH=/data/Megatron-LM/data/gpt2-merges.txt
 
@@ -55,9 +55,9 @@ PROFILE=false
 
 # Megatron Model Parallelism
 current_time=$(date "+%Y.%m.%d-%H.%M.%S")
-TAG="gpt2_345M_baseline_stage${stage}-lazyscatter-${NUM_LAYERS}l_${HIDDEN_SIZE}h_${NUM_WORKERS}n_${NUM_GPUS_PER_WORKER}g_${MP_SIZE}mp_${BATCHSIZE}b_${current_time}"
-LOGDIR="tboard/${TAG}"
-CHECKPOINT_PATH="checkpoints/${TAG}"
+JOB_NAME="gpt2_345M_baseline_stage${stage}-lazyscatter-${NUM_LAYERS}l_${HIDDEN_SIZE}h_${NUM_WORKERS}n_${NUM_GPUS_PER_WORKER}g_${MP_SIZE}mp_${BATCHSIZE}b_${current_time}"
+LOGDIR="tboard/${JOB_NAME}"
+CHECKPOINT_PATH="checkpoints/${JOB_NAME}"
 
 gpt_options=" \
         --model-parallel-size ${MP_SIZE} \
@@ -141,7 +141,7 @@ fi
 
 full_options="${gpt_options} ${deepspeed_options} ${chkp_opt}"
 
-run_cmd="deepspeed --num_nodes ${NUM_WORKERS} --num_gpus ${NUM_GPUS_PER_WORKER}  pretrain_gpt2.py ${@:2} ${full_options}"
+run_cmd="deepspeed --num_nodes ${NUM_WORKERS} --num_gpus ${NUM_GPUS_PER_WORKER}  pretrain_gpt2.py ${@:2} ${full_options} &> ${JOB_NAME}.log"
 echo ${run_cmd}
 eval ${run_cmd}
 
