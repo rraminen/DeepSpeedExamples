@@ -29,20 +29,20 @@ DATA_PATH=/data/Megatron-LM/data/indexed_datasets/megatron
 VOCAB_PATH=/data/Megatron-LM/data/gpt2-vocab.json
 MERGE_PATH=/data/Megatron-LM/data/gpt2-merges.txt
 
-script_path=$(realpath $0)
-script_dir=$(dirname $script_path)
-if [[ -z $1 ]]; then
-       config_json="$script_dir/ds_config.json"
-else
-       config_json=$script_dir/`basename $1`
-fi
-
 #ZeRO Configs
 stage=2
 reduce_scatter=true
 contigious_gradients=true
 rbs=50000000
 agbs=5000000000
+
+script_path=$(realpath $0)
+script_dir=$(dirname $script_path)
+if [[ -z $1 ]]; then
+       config_json="$script_dir/ds_zero_stage_${stage}_dir_config.json"
+else
+       config_json=$script_dir/`basename $1`
+fi
 
 #Actication Checkpointing and Contigious Memory
 chkp_layers=1
