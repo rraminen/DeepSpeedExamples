@@ -1,25 +1,14 @@
 #! /bin/bash
 
 # Change for multinode config
-MP_SIZE=2
-
-DEBUG=0
-if [[ ${DEBUG} == 1 ]];  then
-       NUM_WORKERS=1
-       NUM_GPUS_PER_WORKER=1
-       HIDDEN_SIZE=1024
-       NUM_ATTN_HEADS=16
-       NUM_LAYERS=5
-       BATCHSIZE=1
-else
-       NUM_WORKERS=4 #${DLTS_NUM_WORKER}
-       NUM_GPUS_PER_WORKER=16 #${DLTS_NUM_GPU_PER_WORKER}
-       HIDDEN_SIZE=1024
-       NUM_ATTN_HEADS=16
-       NUM_LAYERS=24 # 50
-       BATCHSIZE=8 # per gpu
-fi
-
+MP_SIZE=1
+TOTAL_BATCHSIZE=512
+NUM_WORKERS=4 #${DLTS_NUM_WORKER}
+NUM_GPUS_PER_WORKER=16 #${DLTS_NUM_GPU_PER_WORKER}
+HIDDEN_SIZE=1024
+NUM_ATTN_HEADS=16
+NUM_LAYERS=24 # 50
+BATCHSIZE=$((MP_SIZE*TOTAL_BATCHSIZE/NUM_WORKERS/NUM_GPUS_PER_WORKER)) # per gpu
 
 ###DATA_PATH=/data/megatron-data/indexed/my-gpt2_text_document
 ###VOCAB_PATH=/data/megatron-data/gpt2-vocab.json
@@ -39,7 +28,7 @@ agbs=5000000000
 script_path=$(realpath $0)
 script_dir=$(dirname $script_path)
 if [[ -z $1 ]]; then
-       config_json="$script_dir/ds_zero_stage_${stage}_dir_config.json"
+       config_json="$script_dir/ds_zero_stage_${stage}_config.json"
 else
        config_json=$script_dir/`basename $1`
 fi
