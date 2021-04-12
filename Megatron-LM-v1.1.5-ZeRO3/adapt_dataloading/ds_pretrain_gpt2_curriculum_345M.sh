@@ -28,6 +28,7 @@ agbs=5000000000
 script_path=$(realpath $0)
 script_dir=$(dirname $script_path)
 curriculum=$1
+tag=$2
 config_json="$script_dir/ds_zero_stage_${stage}_config_curriculum_${curriculum}.json"
 
 #Actication Checkpointing and Contigious Memory
@@ -41,7 +42,7 @@ PROFILE=false
 
 # Megatron Model Parallelism
 current_time=$(date "+%Y.%m.%d-%H.%M.%S")
-JOB_NAME="gpt2_345M_curriculum_${curriculum}_stage${stage}-lazyscatter-${NUM_LAYERS}l_${HIDDEN_SIZE}h_${NUM_WORKERS}n_${NUM_GPUS_PER_WORKER}g_${MP_SIZE}mp_${BATCHSIZE}b_${current_time}"
+JOB_NAME="gpt2_345M_curriculum_${curriculum}_${tag}_stage${stage}-lazyscatter-${NUM_LAYERS}l_${HIDDEN_SIZE}h_${NUM_WORKERS}n_${NUM_GPUS_PER_WORKER}g_${MP_SIZE}mp_${BATCHSIZE}b_${current_time}"
 LOGDIR="tboard/${JOB_NAME}"
 CHECKPOINT_PATH="checkpoints/${JOB_NAME}"
 
