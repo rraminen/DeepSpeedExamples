@@ -93,7 +93,8 @@ def forward_step(data_iterator, model):
 
 
 def train_valid_test_datasets_provider(train_val_test_num_samples,
-                                       train_only=False):
+                                       train_only=False,
+                                       train_seq_length=None):
     """Build train, valid, and test datasets."""
     args = get_args()
 
@@ -104,7 +105,7 @@ def train_valid_test_datasets_provider(train_val_test_num_samples,
             data_impl=args.data_impl,
             splits_string=args.split,
             train_valid_test_num_samples=train_val_test_num_samples,
-            seq_length=args.seq_length,
+            seq_length=train_seq_length,
             seed=args.seed,
             skip_warmup=(not args.mmap_warmup))
         print_rank_0("> finished creating GPT2 datasets ...")
@@ -120,7 +121,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples,
             train_valid_test_num_samples=train_val_test_num_samples,
             seq_length=args.seq_length,
             seed=args.seed,
-            skip_warmup=(not args.mmap_warmup))
+            skip_warmup=(not args.mmap_warmup),
+            train_seq_length=train_seq_length)
         print_rank_0("> finished creating GPT2 datasets ...")
 
         return train_ds, valid_ds, test_ds

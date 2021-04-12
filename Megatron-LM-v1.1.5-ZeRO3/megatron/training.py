@@ -85,11 +85,12 @@ def pretrain(train_valid_test_dataset_provider,
     timers('model and optimizer').stop()
 
     # Data stuff.
+    args.difficulty = None
     if args.deepspeed:
         deepspeed_config = json.load(
             open(args.deepspeed_config, 'r', encoding='utf-8'))
         if "curriculum_learning" in deepspeed_config:
-            args.seq_length = deepspeed_config["curriculum_learning"][
+            args.difficulty = deepspeed_config["curriculum_learning"][
                 "min_difficulty"]
     timers('train/valid/test data iterators').start()
     train_data_iterator, valid_data_iterator, test_data_iterator \
@@ -410,7 +411,7 @@ def training_log(loss_dict,
     # Tensorboard values.
     if writer and torch.distributed.get_rank() == 0:
         writer.add_scalar('learning_rate', learning_rate, iteration)
-        writer.add_scalar('seq_length', args.seq_length, iteration)
+        writer.add_scalar('difficulty', args.difficulty, iteration)
         for key in loss_dict:
             writer.add_scalar(key, loss_dict[key], iteration)
         if args.fp16:
@@ -542,7 +543,7 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
            iteration % args.save_interval == 0:
             save_checkpoint(iteration, model, optimizer, lr_scheduler)
 
-        difficulty = args.seq_length
+        difficulty = args.difficulty
         # Evaluation
         # XXX temporarily disabled for ZeRO-3
         if args.eval_interval and iteration % args.eval_interval == 0 and \
@@ -564,8 +565,8 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
             print('rank {}: iteration {} difficulty {}'.format(
                 torch.distributed.get_rank(), iteration, difficulty))
 
-        if difficulty != args.seq_length:
-            args.seq_length = difficulty
+        if difficulty != args.difficulty:
+            args.difficulty = difficulty
             train_data_iterator = build_train_data_iterators(
                 train_valid_test_dataset_provider)
 
@@ -685,7 +686,7 @@ def build_train_valid_test_data_iterators(
 
         # Build the datasets.
         train_ds, valid_ds, test_ds = build_train_valid_test_datasets_provider(
-            train_val_test_num_samples)
+            train_val_test_num_samples, train_seq_length=args.difficulty)
 
         # Build dataloders.
         train_dataloader = make_data_loader(train_ds)
@@ -764,8 +765,10 @@ def build_train_data_iterators(build_train_valid_test_datasets_provider):
         print_rank_0('    train:      {}'.format(train_num_samples[0]))
 
         # Build the datasets.
-        train_ds = build_train_valid_test_datasets_provider(train_num_samples,
-                                                            train_only=True)
+        train_ds = build_train_valid_test_datasets_provider(
+            train_num_samples,
+            train_only=True,
+            train_seq_length=args.difficulty)
 
         # Build dataloders.
         train_dataloader = make_data_loader(train_ds)

@@ -25,9 +25,14 @@ from megatron.data.dataset_utils import get_train_valid_test_split_
 from megatron.data.indexed_dataset import make_dataset as make_indexed_dataset
 
 
-def build_train_valid_test_datasets(data_prefix, data_impl, splits_string,
-                                    train_valid_test_num_samples, seq_length,
-                                    seed, skip_warmup):
+def build_train_valid_test_datasets(data_prefix,
+                                    data_impl,
+                                    splits_string,
+                                    train_valid_test_num_samples,
+                                    seq_length,
+                                    seed,
+                                    skip_warmup,
+                                    train_seq_length=None):
     """Build train, valid, and test datasets."""
 
     # Indexed dataset.
@@ -56,10 +61,16 @@ def build_train_valid_test_datasets(data_prefix, data_impl, splits_string,
                                   stop=splits[index + 1],
                                   step=1,
                                   dtype=np.int32)
-            dataset = GPT2Dataset(name, data_prefix, documents,
-                                  indexed_dataset,
-                                  train_valid_test_num_samples[index],
-                                  seq_length, seed)
+            if name == 'train' and train_seq_length is not None:
+                dataset = GPT2Dataset(name, data_prefix, documents,
+                                      indexed_dataset,
+                                      train_valid_test_num_samples[index],
+                                      train_seq_length, seed)
+            else:
+                dataset = GPT2Dataset(name, data_prefix, documents,
+                                      indexed_dataset,
+                                      train_valid_test_num_samples[index],
+                                      seq_length, seed)
         return dataset
 
     train_dataset = build_dataset(0, 'train')
