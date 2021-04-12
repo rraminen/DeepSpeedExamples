@@ -18,6 +18,7 @@ from datetime import datetime
 import math
 import sys
 import torch
+import json
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 from apex.optimizers import FusedAdam as Adam
 
@@ -84,6 +85,12 @@ def pretrain(train_valid_test_dataset_provider,
     timers('model and optimizer').stop()
 
     # Data stuff.
+    if args.deepspeed:
+        deepspeed_config = json.load(
+            open(args.deepspeed_config, 'r', encoding='utf-8'))
+        if "curriculum_learning" in deepspeed_config:
+            args.seq_length = deepspeed_config["curriculum_learning"][
+                "min_difficulty"]
     timers('train/valid/test data iterators').start()
     train_data_iterator, valid_data_iterator, test_data_iterator \
         = build_train_valid_test_data_iterators(
@@ -98,7 +105,8 @@ def pretrain(train_valid_test_dataset_provider,
     iteration = 0
     if args.do_train and args.train_iters > 0:
         iteration = train(forward_step_func, model, optimizer, lr_scheduler,
-                          train_data_iterator, valid_data_iterator)
+                          train_data_iterator, valid_data_iterator,
+                          train_valid_test_dataset_provider)
 
     if args.do_valid:
         prefix = 'the end of training for val data'
@@ -402,6 +410,7 @@ def training_log(loss_dict,
     # Tensorboard values.
     if writer and torch.distributed.get_rank() == 0:
         writer.add_scalar('learning_rate', learning_rate, iteration)
+        writer.add_scalar('seq_length', args.seq_length, iteration)
         for key in loss_dict:
             writer.add_scalar(key, loss_dict[key], iteration)
         if args.fp16:
@@ -475,10 +484,22 @@ def flops_calculator(model, args, iteration_time):
 
 
 def train(forward_step_func, model, optimizer, lr_scheduler,
-          train_data_iterator, valid_data_iterator):
+          train_data_iterator, valid_data_iterator,
+          train_valid_test_dataset_provider):
     """Train the model function."""
     args = get_args()
     timers = get_timers()
+
+    if args.deepspeed:
+        deepspeed_config = json.load(
+            open(args.deepspeed_config, 'r', encoding='utf-8'))
+        if "curriculum_learning" in deepspeed_config:
+            from deepspeed.runtime.adaptive_dataloading.curriculum_scheduler import CurriculumScheduler
+            curriculum_scheduler = CurriculumScheduler(
+                deepspeed_config["curriculum_learning"]["min_difficulty"],
+                deepspeed_config["curriculum_learning"]["max_difficulty"],
+                deepspeed_config["curriculum_learning"]["schedule_type"],
+                deepspeed_config["curriculum_learning"]["schedule_config"])
 
     # Turn on training mode which enables dropout.
     model.train()
@@ -521,14 +542,32 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
            iteration % args.save_interval == 0:
             save_checkpoint(iteration, model, optimizer, lr_scheduler)
 
+        difficulty = args.seq_length
         # Evaluation
         # XXX temporarily disabled for ZeRO-3
         if args.eval_interval and iteration % args.eval_interval == 0 and \
            args.do_valid:
             prefix = 'iteration {}'.format(iteration)
-            evaluate_and_print_results(prefix, forward_step_func,
-                                       valid_data_iterator, model, iteration,
-                                       False)
+            value_list, ppl_list = evaluate_and_print_results(
+                prefix, forward_step_func, valid_data_iterator, model,
+                iteration, False)
+            if args.deepspeed and "curriculum_learning" in deepspeed_config and deepspeed_config[
+                    "curriculum_learning"]["schedule_type"] == "adaptive":
+                difficulty = curriculum_scheduler.get_next_difficulty(
+                    iteration, {'training_signal': ppl_list[0]})
+                print('rank {}: iteration {} difficulty {}'.format(
+                    torch.distributed.get_rank(), iteration, difficulty))
+
+        if args.deepspeed and "curriculum_learning" in deepspeed_config and deepspeed_config[
+                "curriculum_learning"]["schedule_type"] == "fixed_discrete":
+            difficulty = curriculum_scheduler.get_next_difficulty(iteration)
+            print('rank {}: iteration {} difficulty {}'.format(
+                torch.distributed.get_rank(), iteration, difficulty))
+
+        if difficulty != args.seq_length:
+            args.seq_length = difficulty
+            train_data_iterator = build_train_data_iterators(
+                train_valid_test_dataset_provider)
 
         if args.exit_interval and iteration % args.exit_interval == 0:
             torch.distributed.barrier()
@@ -592,11 +631,15 @@ def evaluate_and_print_results(prefix,
     total_loss_dict = evaluate(forward_step_func, data_iterator, model,
                                verbose)
     string = ' validation loss at {} | '.format(prefix)
+    value_list = []
+    ppl_list = []
     for key in total_loss_dict:
         string += '{} value: {:.6E} | '.format(key,
                                                total_loss_dict[key].item())
         ppl = math.exp(min(20, total_loss_dict[key].item()))
         string += '{} PPL: {:.6E} | '.format(key, ppl)
+        value_list.append(total_loss_dict[key].item())
+        ppl_list.append(ppl)
         if writer and torch.distributed.get_rank() == 0:
             writer.add_scalar('{} value'.format(key),
                               total_loss_dict[key].item(), iteration)
@@ -606,6 +649,8 @@ def evaluate_and_print_results(prefix,
     print_rank_0('-' * length)
     print_rank_0(string)
     print_rank_0('-' * length)
+
+    return value_list, ppl_list
 
 
 def build_train_valid_test_data_iterators(
@@ -697,3 +742,58 @@ def build_train_valid_test_data_iterators(
         test_data_iterator = None
 
     return train_data_iterator, valid_data_iterator, test_data_iterator
+
+
+def build_train_data_iterators(build_train_valid_test_datasets_provider):
+    """XXX"""
+    args = get_args()
+
+    train_dataloader = None
+
+    print_rank_0('> building train datasets ...')
+    # Data loader only on rank 0 of each model parallel group.
+    if mpu.get_model_parallel_rank() == 0:
+        # Rank, size, and global batch size.
+        data_parallel_size = mpu.get_data_parallel_world_size()
+        global_batch_size = args.batch_size * data_parallel_size
+
+        # Number of train/valid/test samples.
+        train_iters = args.train_iters
+        train_num_samples = [train_iters * global_batch_size]
+        print_rank_0(' > datasets target sizes (minimum size):')
+        print_rank_0('    train:      {}'.format(train_num_samples[0]))
+
+        # Build the datasets.
+        train_ds = build_train_valid_test_datasets_provider(train_num_samples,
+                                                            train_only=True)
+
+        # Build dataloders.
+        train_dataloader = make_data_loader(train_ds)
+
+        # Flags to know if we need to do training/validation/testing.
+        do_train = train_dataloader is not None and args.train_iters > 0
+        # Need to broadcast num_tokens and num_type_tokens.
+        flags = torch.cuda.LongTensor([int(do_train)])
+    else:
+        flags = torch.cuda.LongTensor([0])
+
+    # Broadcast num tokens.
+    torch.distributed.broadcast(flags,
+                                mpu.get_model_parallel_src_rank(),
+                                group=mpu.get_model_parallel_group())
+    args.do_train = flags[0].item()
+
+    # Shift the start iterations.
+    if train_dataloader is not None:
+        train_dataloader.batch_sampler.start_iter = args.iteration % \
+            len(train_dataloader)
+        print_rank_0('setting training data start iteration to {}'.format(
+            train_dataloader.batch_sampler.start_iter))
+
+    # Build iterators.
+    if train_dataloader is not None:
+        train_data_iterator = iter(train_dataloader)
+    else:
+        train_data_iterator = None
+
+    return train_data_iterator
